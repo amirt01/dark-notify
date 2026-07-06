@@ -24,7 +24,7 @@ end
 local state = {
   initialized = false,
   pid = -1,
-  stdin_handle = nil,
+  handle = nil,
   config = {},
 }
 
@@ -115,19 +115,15 @@ function M.toggle()
 end
 
 local function init_dark_notify()
-  -- Docs on this vim.loop stuff: https://github.com/luvit/luv
-
   local handle, pid
-  local stdout = vim.loop.new_pipe(false)
-  local stdin = vim.loop.new_pipe(false)
+  local stdout = vim.uv.new_pipe(false)
 
   local function onexit()
-    vim.loop.close(handle, vim.schedule_wrap(function()
-      vim.loop.shutdown(stdout)
-      vim.loop.shutdown(stdin)
+    vim.uv.close(handle, vim.schedule_wrap(function()
+      vim.uv.close(stdout)
       state.initialized = false
       state.pid = nil
-      state.stdin_handle = nil
+      state.handle = nil
     end))
   end
 
@@ -143,20 +139,20 @@ local function init_dark_notify()
     end
   end
 
-  handle, pid = vim.loop.spawn(
+  -- --no-stdin prevents dark-notify from reading stdin, which would cause SIGTTIN
+  -- and stop the process when running as a subprocess of a non-TTY parent.
+  handle, pid = vim.uv.spawn(
     "dark-notify",
-    { stdio = {stdin, stdout, nil} },
+    { args = {"--no-stdin"}, stdio = {nil, stdout, nil} },
     vim.schedule_wrap(onexit)
   )
 
-  vim.loop.read_start(stdout, vim.schedule_wrap(onread))
+  vim.uv.read_start(stdout, vim.schedule_wrap(onread))
 
   state.initialized = true
   state.pid = pid
-  state.stdin_handle = stdin
+  state.handle = handle
 
-  -- For whatever reason, nvim isn't killing child processes properly on exit
-  -- So if you don't do this, you get zombie dark-notify processes hanging about.
   nvim_create_augroups({
     DarkNotifyKillChildProcess = {
       { "VimLeave", "*", "lua require('dark_notify').stop()" },
@@ -164,15 +160,11 @@ local function init_dark_notify()
   })
 end
 
--- For whatever reason, killing the child process doesn't work, at all. So we
--- send it the line "quit\n", and it kills itself.
 function M.stop()
-  if state.stdin_handle == nil then
+  if state.handle == nil then
     return
   end
-  vim.loop.write(state.stdin_handle, "quit\n")
-  -- process quits itself, calls onexit
-  -- config gets edited from there
+  vim.uv.process_kill(state.handle, "sigterm")
 end
 
 function M.configure(config)

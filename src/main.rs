@@ -26,6 +26,12 @@ struct Options {
     /// Does not print the initial value, only prints actual changes.
     #[structopt(short = "o", long = "only-changes")]
     only_changes: bool,
+
+    /// Disable stdin monitoring. Useful when running as a subprocess or background
+    /// process where reading stdin would cause SIGTTIN and stop the process.
+    /// Send SIGTERM to quit instead of typing "quit<enter>".
+    #[structopt(long = "no-stdin")]
+    no_stdin: bool,
 }
 
 fn handle_quit() -> Result<(), Error> {
@@ -43,7 +49,9 @@ fn handle_quit() -> Result<(), Error> {
 
 fn main() -> Result<(), Error> {
     let options = Options::from_args();
-    handle_quit()?;
+    if !options.no_stdin {
+        handle_quit()?;
+    }
     app::run(!options.only_changes || options.exit, move |appearance| {
         if let Some(command) = options.command.as_ref() {
             let cmd = format!("{} {}", command, appearance);
